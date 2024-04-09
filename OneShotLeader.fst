@@ -18,7 +18,7 @@ noeq type state = {leader: M.t Node.t (option Node.t);
                    msgs: list msg}
 
 (*
- * Assume a node called self
+ * Assume a node called selfd
  *)
 assume val self: Node.t
 (*
@@ -39,10 +39,11 @@ let axm_quorum_intersection q1 q2 = admit()
  * Quorum monotonicity axiom. This cannot be proven just from quorum intersection since the lemma only goes one way.
  *)
 val axm_quorum_monotonic: q1:list Node.t -> q2:list Node.t
+  -> n:Node.t
   -> Lemma(requires (is_quorum q1) 
-            /\ (forall n. {:pattern (L.mem n q1); (L.mem n q2)} 
-                  L.mem n q1 ==> L.mem n q2))
+            /\ (L.mem n q1 ==> L.mem n q2))
           (ensures is_quorum q2)
+          [SMTPat [(L.mem n q1);(L.mem n q2)]]
 let axm_quorum_monotonic q1 q2 = admit()
 
 let is_safe {leader} = 
@@ -86,13 +87,14 @@ let cast_vote n s =
 val cast_vote_safe: n:Node.t -> s:state ->
     Lemma(requires is_safe s /\ inv s)
          (ensures is_safe (cast_vote n s) 
-                /\ inv (cast_vote n s))
+               /\ inv (cast_vote n s))
 let cast_vote_safe n s = ()
 
 (* recv_vote *)
 (* L.mem x (M.sel s.votes n) *)
 
-val recv_vote: state -> state
+val recv_vote: s:state -> s':state{forall n x.  L.mem x (M.sel s.votes n) 
+            ==> L.mem x (M.sel s'.votes n)}
 let recv_vote s = 
   let is_my_vote m = match m with
     | Vote frm to -> to = self
@@ -101,32 +103,24 @@ let recv_vote s =
   match my_votes with
     | (Vote frm _)::other -> 
       let votes' = M.upd s.votes self ([frm]@(M.sel s.votes self)) in
-      let _ = assert(forall n. {:pattern (M.sel votes' n)} n=self ==> 
-                M.sel votes' n = frm::(M.sel s.votes n)) in
-      let _ = assert(forall n. not (n = self) ==> 
-                M.sel votes' n = M.sel s.votes n) in
-      let _ = assert(forall x n. n=self ==> 
-                (L.mem x (M.sel votes' n) 
-                  ==> L.mem x (M.sel s.votes n))) in
-      let _ = assert(forall x n. not (n=self) ==> 
-                (L.mem x (M.sel votes' n) 
-                  <==> L.mem x (M.sel s.votes n))) in
-      let _ = assert(forall x n.  L.mem x (M.sel votes' n) 
-                ==> L.mem x (M.sel s.votes n)) in
       let msgs' = other@rest in
       {s with votes=votes'; msgs=msgs'}
     | _ -> s
 
+let inv2 {leader;msgs;votes} (n:Node.t) =
+    L.mem (Leader n) msgs ==> is_quorum (M.sel votes n)
+
 val recv_vote_monotonic: s:state -> n:Node.t
   -> Lemma(forall x. L.mem x (M.sel s.votes n) 
             ==> L.mem x (M.sel (recv_vote s).votes n))
+            [SMTPat (is_quorum (M.sel s.votes n))]
 let recv_vote_monotonic s n = ()
 
-val recv_vote_safe: s:state ->
-    Lemma(requires is_safe s /\ inv s)
+val recv_vote_safe: s:state -> n:Node.t ->
+    Lemma(requires is_safe s /\ inv2 s n)
          (ensures is_safe (recv_vote s) 
-                /\ inv (recv_vote s))
-let recv_vote_safe s = ()
+                /\ inv2 (recv_vote s) n)
+let recv_vote_safe s n = ()
 
 val declare_leader: state -> state
 let declare_leader s = 
@@ -134,6 +128,13 @@ let declare_leader s =
   if is_quorum my_votes then
     {s with msgs = (Leader self)::s.msgs}
   else s
+
+val declare_leader_safe: s:state ->
+    Lemma(requires is_safe s /\ inv s)
+         (ensures is_safe (declare_leader s) 
+                /\ inv (declare_leader s))
+let declare_leader_safe s = ()
+
 
 val register_leader: state -> state
 let register_leader s = 
@@ -143,16 +144,9 @@ let register_leader s =
       {s with leader = M.upd s.leader self (Some n)}
   | _ -> s
 
-
-
-
-val declare_leader_safe: s:state ->
-    Lemma(requires is_safe s /\ inv s)
-         (ensures is_safe (declare_leader s) 
-                /\ inv (declare_leader s))
-let declare_leader_safe s = ()
-
 val register_leader_safe: s:state ->
     Lemma(requires is_safe s)
          (ensures is_safe (register_leader s))
 let register_leader_safe s = ()
+
+
