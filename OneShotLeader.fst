@@ -46,35 +46,33 @@ val axm_quorum_monotonic: q1:list Node.t -> q2:list Node.t
            SMTPat (is_quorum q2)]
 let axm_quorum_monotonic q1 q2 = admit()
 
-val foo_thm: q1:list Node.t -> q2:list Node.t
-  -> Lemma(requires (is_quorum q1) 
-            /\ (forall x. (*{:pattern (L.mem n q1); (L.mem n q2)}*)
-                  L.mem x q1 ==> L.mem x q2))
-          (ensures is_quorum q2)
-let foo_thm q1 q2 = 
-  let _ = axm_quorum_monotonic q1 q2 in
-  ()
-
 let is_safe {leader} = 
-  forall n1 n2. {:pattern (M.sel leader n1);(M.sel leader n2)} 
+  forall n1 n2. (*{:pattern (M.sel leader n1);(M.sel leader n2)} *)
       M.sel leader n1 = None \/ M.sel leader n2 = None 
                 \/ M.sel leader n1 = M.sel leader n2
 
-let inv2 {msgs;votes} (n:Node.t) =
-    L.mem (Leader n) msgs ==> is_quorum (M.sel votes n)
+let inv2 {msgs;votes} =
+    forall n. L.mem (Leader n) msgs ==> is_quorum (M.sel votes n)
 
-let inv3 ({leader;msgs}) (n1:Node.t) (n2:Node.t) =
-  (M.sel leader n1 = Some n2) ==> L.mem (Leader n2) msgs
+let inv3 ({leader;msgs})  =
+  forall n1 n2. (M.sel leader n1 = Some n2) ==> L.mem (Leader n2) msgs
 
-let inv4 ({votes;msgs}) (n1:Node.t) (n2:Node.t) = 
-  L.mem n2 (M.sel votes n1)  ==> L.mem (Vote n2 n1) msgs
+let inv4 ({votes;msgs})  = 
+  forall n1 n2. L.mem n2 (M.sel votes n1)  ==> L.mem (Vote n2 n1) msgs
 
-let inv5 ({msgs}) (n1:Node.t) (n2:Node.t) (n3:Node.t) = 
-  L.mem (Vote n1 n2) msgs /\ L.mem (Vote n1 n3) msgs  
+let inv5 ({msgs}) = 
+  forall n1 n2 n3. L.mem (Vote n1 n2) msgs /\ L.mem (Vote n1 n3) msgs  
         ==> n2 = n3
 
+let inv6 ({msgs;voted}) = 
+  forall n1 n2. L.mem (Vote n1 n2) msgs ==> M.sel voted n1
+
+let  inv7 ({msgs})  = 
+  forall n1 n2. L.mem (Leader n1) msgs /\ L.mem (Leader n2) msgs 
+          ==> n1 = n2  
+
 #set-options "--query_stats --split_queries always"
-#set-options "--z3rlimit 1000"
+#set-options "--z3rlimit 10000"
 
 (*
  * Initial state and its safety
@@ -85,7 +83,7 @@ let init_state = {leader = M.const None;
                   msgs = []}
 
 val init_state_safe: (n:Node.t) ->
-  Lemma (is_safe init_state /\ inv2 init_state n)
+  Lemma (is_safe init_state /\ inv2 init_state)
 let init_state_safe n = ()
 
 
@@ -100,18 +98,16 @@ let cast_vote n s =
   else
     s
 
-val cast_vote_safe: n:Node.t -> s:state 
-    -> n2:Node.t -> n3:Node.t -> n4:Node.t
-    -> n5:Node.t -> n6:Node.t -> n7:Node.t
-    -> n8:Node.t -> n9:Node.t -> 
-    Lemma(requires is_safe s /\ inv2 s n2 /\ inv3 s n3 n4
-                    /\ inv4 s n5 n6 /\ inv5 s n7 n8 n9)
+val cast_vote_safe: n:Node.t -> s:state ->
+    Lemma(requires is_safe s /\ inv2 s /\ inv3 s 
+                    /\ inv4 s /\ inv5 s /\ inv6 s)
          (ensures is_safe (cast_vote n s) 
-               /\ inv2 (cast_vote n s) n2
-               /\ inv3 (cast_vote n s) n3 n4
-               /\ inv4 (cast_vote n s) n5 n6 
-               /\ inv5 (cast_vote n s) n7 n8 n9)
-let cast_vote_safe n s n2 n3 n4 n5 n6 n7 n8 n9 = ()
+               /\ inv2 (cast_vote n s)
+               /\ inv3 (cast_vote n s)
+               /\ inv4 (cast_vote n s)
+               /\ inv5 (cast_vote n s)
+               /\ inv6 (cast_vote n s))
+let cast_vote_safe n s = ()
 
 (* recv_vote *)
 
@@ -130,19 +126,17 @@ let recv_vote s =
             (L.concat [frm] (M.sel s.votes self)) in
       {s with votes=votes'}
     | _ -> s
-(*val recv_vote_monotonic_msgs: s:state -> n:Node.t
-  -> Lemma(L.mem (Leader n) s.msgs 
-            <==> L.mem (Leader n) (recv_vote s).msgs)
-            [SMTPat (L.mem (Leader n) s.msgs)]
-let recv_vote_monotonic_msgs s n = ()*)
 
-val recv_vote_safe: s:state -> n1:Node.t ->
-    n2:Node.t -> n3:Node.t -> 
-    Lemma(requires is_safe s /\ inv2 s n1 /\ inv3 s n2 n3)
+val recv_vote_safe: s:state ->  
+    Lemma(requires is_safe s /\ inv2 s /\ inv3 s
+                    /\ inv4 s /\ inv5 s /\ inv6 s)
          (ensures is_safe (recv_vote s) 
-                /\ inv2 (recv_vote s) n1
-                /\ inv3 (recv_vote s) n2 n3)
-let recv_vote_safe s n1 n2 n3 = 
+                /\ inv2 (recv_vote s)
+                /\ inv3 (recv_vote s)
+                /\ inv4 (recv_vote s)
+                /\ inv5 (recv_vote s)
+                /\ inv6 (recv_vote s))
+let recv_vote_safe s = 
   (*let s' = recv_vote s in
   let _ = assert (L.mem (Leader n) s'.msgs ==> L.mem (Leader n) s.msgs) in
   let _ = assert (L.mem (Leader n) s.msgs ==> 
@@ -166,29 +160,54 @@ let declare_leader s =
     {s with msgs = (Leader self)::s.msgs}
   else s
 
-val declare_leader_safe: s:state -> n1:Node.t ->
-   n2:Node.t -> n3:Node.t ->
-    Lemma(requires is_safe s /\ inv2 s n1 /\ inv3 s n2 n3)
+val declare_leader_safe: s:state -> 
+    n1:Node.t -> n2:Node.t -> 
+    Lemma(requires is_safe s /\ inv2 s /\ inv3 s
+                    /\ inv4 s /\ inv5 s /\ inv6 s
+                    /\ inv7 s)
          (ensures is_safe (declare_leader s) 
-                /\ inv2 (declare_leader s) n1
-                /\ inv3 (declare_leader s) n2 n3)
-let declare_leader_safe s n1 n2 n3 = ()
+                /\ inv2 (declare_leader s)
+                /\ inv3 (declare_leader s)
+                /\ inv4 (declare_leader s)
+                /\ inv5 (declare_leader s)
+                /\ inv6 (declare_leader s)
+                /\ inv7 (declare_leader s))
+let declare_leader_safe s n1 n2 = ()
 
+(*
+ * Register Leader
+ *)
 
 val register_leader: state -> state
 let register_leader s = 
   match L.find (function (Leader _) -> true 
                         | _ -> false) s.msgs with
-  | Some (Leader n) -> 
+  | Some (Leader n) ->
+      let _ = assert(L.mem (Leader n) s.msgs) in 
+      let _ = assert(inv7 s ==> 
+                (forall n'. L.mem (Leader n') s.msgs ==> n'=n)) in
       {s with leader = M.upd s.leader self (Some n)}
   | _ -> s
 
-val register_leader_safe: s:state -> n1:Node.t ->
-    n2:Node.t -> n3:Node.t ->
-    Lemma(requires is_safe s /\ inv2 s n1 /\ inv3 s n2 n3)
+val register_leader_safe: s:state ->
+    Lemma(requires is_safe s /\ inv2 s/\ inv3 s
+                    /\ inv4 s /\ inv5 s /\ inv6 s
+                    /\ inv7 s)
          (ensures is_safe (register_leader s)
-                  /\ inv2 (register_leader s) n1
-                  /\ inv3 (register_leader s) n2 n3)
-let register_leader_safe s n1 n2 n3 = ()
+                  /\ inv2 (register_leader s)
+                  /\ inv3 (register_leader s)
+                  /\ inv4 (register_leader s)
+                  /\ inv5 (register_leader s)
+                  /\ inv6 (register_leader s)
+                  /\ inv7 (register_leader s))
+let register_leader_safe s =
+  let {leader; msgs} = s in
+  let s' = register_leader s in
+  (*
+   * Somehow the theorem needs to be restated for F* to prove.
+   *)
+  let _ = assert(forall n1 n2 n3 n4. M.sel s'.leader n1 = Some n2
+                  /\ M.sel s'.leader n3 = Some n4 ==> n2 = n4) in
+  ()
 
 let t = true
